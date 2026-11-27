@@ -4,24 +4,37 @@ import { Field } from '../common/Field';
 import { Modal } from '../common/Modal';
 
 export function EnquiryForm({ plan, bank, onSubmit, onClose }) {
-  const [f, setF] = useState({ name: '', phone: '', aadhaar: '', amount: plan.min, file: null });
-  const [otp, setOtp] = useState({ sent: false, code: '', ok: false });
-  const [e, setE] = useState({});
+  const [f, setF] = useState({ name: '', phone: '', amount: plan.min, file: null, consent: false });
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
 
-  const set = (k) => (ev) => setF({ ...f, [k]: ev.target.value });
+  const set = (key) => (event) => setF({ ...f, [key]: event.target.value });
 
-  const go = (ev) => {
-    ev.preventDefault();
-    const x = {};
-    if (f.name.trim().length < 3) x.name = 'Enter your name as on your Aadhaar card.';
-    if (!/^[6-9]\d{9}$/.test(f.phone)) x.phone = 'Enter a 10-digit Indian mobile number.';
-    else if (!otp.ok) x.phone = 'Verify your phone number with the OTP.';
-    if (!/^\d{12}$/.test(f.aadhaar)) x.aadhaar = 'Aadhaar number must be 12 digits.';
-    if (!f.file) x.file = 'Upload a copy of your Aadhaar card.';
-    if (Number(f.amount) < plan.min) x.amount = 'Minimum deposit is ' + inr(plan.min) + '.';
+  const go = async (event) => {
+    event.preventDefault();
+    const nextErrors = {};
+    if (f.name.trim().length < 3) nextErrors.name = 'Enter your legal name.';
+    if (!/^[6-9]\d{9}$/.test(f.phone)) nextErrors.phone = 'Enter a 10-digit Indian mobile number.';
+    if (!f.file) nextErrors.file = 'Upload a copy of your Aadhaar card.';
+    else if (!['image/jpeg', 'image/png', 'application/pdf'].includes(f.file.type)) {
+      nextErrors.file = 'Choose a JPG, PNG, or PDF file.';
+    } else if (f.file.size > 5 * 1024 * 1024) {
+      nextErrors.file = 'The file must be 5 MB or smaller.';
+    }
+    if (Number(f.amount) < plan.min) nextErrors.amount = `Minimum deposit is ${inr(plan.min)}.`;
+    if (!f.consent) nextErrors.consent = 'Consent is required to share this document with the bank.';
 
-    setE(x);
-    if (!Object.keys(x).length) onSubmit(f);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
+
+    setBusy(true);
+    try {
+      await onSubmit(f);
+    } catch (error) {
+      setErrors({ form: `Could not send enquiry: ${error.message}` });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -32,80 +45,47 @@ export function EnquiryForm({ plan, bank, onSubmit, onClose }) {
           <Field label="Bank code">
             <input value={bank.code} readOnly />
           </Field>
-          <Field label="Deposit amount (₹)" error={e.amount}>
-            <input type="number" value={f.amount} onChange={set('amount')} />
+          <Field label="Deposit amount (₹)" error={errors.amount}>
+            <input type="number" min={plan.min} value={f.amount} onChange={set('amount')} />
           </Field>
         </div>
 
-        <Field label="Legal name" error={e.name}>
-          <input value={f.name} onChange={set('name')} />
+        <Field label="Legal name" error={errors.name}>
+          <input autoComplete="name" value={f.name} onChange={set('name')} />
         </Field>
 
-        <Field label="Phone number" error={e.phone}>
-          <div className="row" style={{ flexWrap: 'nowrap' }}>
-            <input
-              inputMode="numeric"
-              maxLength="10"
-              value={f.phone}
-              disabled={otp.ok}
-              onChange={set('phone')}
-            />
-            {otp.ok ? (
-              <span className="tag ok">Verified</span>
-            ) : (
-              <button
-                type="button"
-                className="btn ghost"
-                disabled={f.phone.length !== 10}
-                onClick={() => setOtp({ ...otp, sent: true })}
-              >
-                Send OTP
-              </button>
-            )}
-          </div>
-        </Field>
-
-        {otp.sent && !otp.ok && (
-          <Field label="Enter OTP (demo code: 123456)">
-            <div className="row" style={{ flexWrap: 'nowrap' }}>
-              <input
-                inputMode="numeric"
-                maxLength="6"
-                value={otp.code}
-                onChange={(ev) => setOtp({ ...otp, code: ev.target.value })}
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() =>
-                  otp.code === '123456'
-                    ? setOtp({ ...otp, ok: true })
-                    : setE({ ...e, phone: 'Wrong OTP. Try 123456.' })
-                }
-              >
-                Verify
-              </button>
-            </div>
-          </Field>
-        )}
-
-        <Field label="Aadhaar number" error={e.aadhaar}>
-          <input inputMode="numeric" maxLength="12" value={f.aadhaar} onChange={set('aadhaar')} />
-        </Field>
-
-        <Field label="Upload Aadhaar card" error={e.file}>
+        <Field label="Phone number" error={errors.phone}>
           <input
-            type="file"
-            accept="image/*,.pdf"
-            onChange={(ev) => setF({ ...f, file: ev.target.files[0] ? ev.target.files[0].name : null })}
+            type="tel"
+            inputMode="numeric"
+            maxLength="10"
+            value={f.phone}
+            onChange={(event) => setF({ ...f, phone: event.target.value.replace(/\D/g, '') })}
           />
         </Field>
 
+        <Field label="Upload Aadhaar card" error={errors.file}>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,application/pdf"
+            onChange={(event) => setF({ ...f, file: event.target.files?.[0] || null })}
+          />
+        </Field>
+        <p className="mut">This document is stored privately and shared only with this bank and the admin.</p>
+        <label className="consent">
+          <input
+            type="checkbox"
+            checked={f.consent}
+            onChange={(event) => setF({ ...f, consent: event.target.checked })}
+          />
+          I consent to share my uploaded identity document and enquiry details with this bank.
+        </label>
+        {errors.consent && <p className="err" role="alert">{errors.consent}</p>}
+        {errors.form && <p className="err" role="alert">{errors.form}</p>}
+
         <div className="row">
-          <button type="button" className="btn ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn">Send enquiry</button>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" disabled={busy}>{busy ? 'Sending…' : 'Send enquiry'}</button>
         </div>
       </form>
     </Modal>

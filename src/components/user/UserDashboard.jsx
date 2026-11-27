@@ -1,39 +1,30 @@
 import { useState } from 'react';
-import { inr, today, uid } from '../../utils/formatters';
+import { createEnquiry } from '../../lib/data';
+import { inr } from '../../utils/formatters';
 import { Empty } from '../common/Empty';
 import { Shell } from '../common/Shell';
 import { EnquiryForm } from './EnquiryForm';
 import { EnquiryList } from './EnquiryList';
-import { MaturityCalculator } from './MaturityCalculator';
 
-export function UserDashboard({ db, setDb, sess, toast }) {
+export function UserDashboard({ db, refreshDb, sess, toast }) {
   const [tab, setTab] = useState('plans');
   const [pick, setPick] = useState(null);
-  const [calcPlan, setCalcPlan] = useState(null);
+  const plans = db.plans.filter((plan) => plan.status === 'approved');
+  const ads = db.adReq.filter((ad) => ad.status === 'approved');
+  const mine = db.enq.filter((enquiry) => enquiry.userId === sess.userId);
 
-  const ads = db.adReq.filter((a) => a.status === 'approved');
-  const mine = db.enq.filter((q) => q.userId === sess.userId);
-
-  const send = (f) => {
-    const b = db.banks.find((b) => b.id === pick.bankId);
-    const newEnq = {
-      id: uid(),
+  const send = async (form) => {
+    const bank = db.banks.find((item) => item.id === pick.bankId);
+    if (!bank) throw new Error('The selected bank is no longer available.');
+    await createEnquiry({
+      ...form,
       planId: pick.id,
-      bankId: b.id,
-      userId: sess.userId,
-      email: sess.email,
-      name: f.name,
-      phone: f.phone,
-      aadhaar: f.aadhaar,
-      file: f.file,
-      amount: f.amount,
-      code: b.code,
-      date: today(),
-    };
-    setDb({ ...db, enq: [newEnq, ...db.enq] });
+      bankId: bank.id,
+    }, sess.userId);
+    await refreshDb();
     setPick(null);
     setTab('mine');
-    toast('Enquiry sent to ' + b.name);
+    toast(`Enquiry sent to ${bank.name}`);
   };
 
   return (
@@ -44,63 +35,75 @@ export function UserDashboard({ db, setDb, sess, toast }) {
     >
       {tab === 'plans' ? (
         <>
-          <h2>Returns Estimator</h2>
-          <MaturityCalculator
-            plans={db.plans}
-            banks={db.banks}
-            selectedPlan={calcPlan}
-            onEnquire={(plan) => setPick(plan)}
-          />
-
           <h2>FD plans</h2>
           <div>
-            {ads.map((a) => (
-              <div className="ad" key={a.id}>
-                <span className="tag wait">Sponsored</span> <h3>{a.headline}</h3>
-                <span className="mut">{a.message}</span>
-              </div>
-            ))}
+            {ads.map((ad) => {
+              const bank = db.banks.find((item) => item.id === ad.bankId);
+              const plan = plans.find((item) => item.id === ad.planId);
+              return (
+                <article className="sponsored-ad" key={ad.id}>
+                  <div className="sponsored-ad__header">
+                    <div className="sponsored-ad__brand">
+                      <span className="sponsored-ad__mark" aria-hidden="true">
+                        {(bank?.name || 'FD').slice(0, 1).toUpperCase()}
+                      </span>
+                      <div>
+                        <span className="sponsored-ad__eyebrow">Sponsored offer</span>
+                        <strong>{bank ? bank.name : 'Featured bank'}</strong>
+                      </div>
+                    </div>
+                    <span className="sponsored-ad__badge">Featured</span>
+                  </div>
+                  <div className="sponsored-ad__content">
+                    <h3>{ad.headline}</h3>
+                    <p>{ad.message}</p>
+                  </div>
+                  {plan && (
+                    <div className="sponsored-ad__details">
+                      <div>
+                        <span>Interest rate</span>
+                        <strong>{plan.rate}% <small>p.a.</small></strong>
+                      </div>
+                      <div>
+                        <span>Tenure</span>
+                        <strong>{plan.tenure} <small>months</small></strong>
+                      </div>
+                      <div>
+                        <span>Minimum deposit</span>
+                        <strong>{inr(plan.min)}</strong>
+                      </div>
+                    </div>
+                  )}
+                  {plan && (
+                    <div className="sponsored-ad__footer">
+                      <span>Explore this fixed deposit offer</span>
+                      <button type="button" className="sponsored-ad__button" onClick={() => setPick(plan)}>
+                        Enquire now <span aria-hidden="true">→</span>
+                      </button>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
             <div className="grid">
-              {db.plans.map((p) => {
-                const b = db.banks.find((b) => b.id === p.bankId);
+              {plans.map((plan) => {
+                const bank = db.banks.find((item) => item.id === plan.bankId);
                 return (
-                  <div className="card stack" key={p.id}>
+                  <div className="card stack" key={plan.id}>
                     <div>
-                      <h3>{p.name}</h3>
-                      <span className="mut">{b ? b.name : 'Bank'}</span>
+                      <h3>{plan.name}</h3>
+                      <span className="mut">{bank ? bank.name : 'Bank'}</span>
                     </div>
-                    <div className="rate">
-                      {p.rate}% <span className="mut">p.a.</span>
-                    </div>
-                    <div className="mut">
-                      {p.tenure} months · from {inr(p.min)}
-                    </div>
-                    <div className="row" style={{ gap: '8px' }}>
-                      <button
-                        type="button"
-                        className="btn ghost"
-                        style={{ flex: 1 }}
-                        onClick={() => {
-                          setCalcPlan(p);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                      >
-                        Calculate
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ flex: 1 }}
-                        onClick={() => setPick(p)}
-                      >
-                        Send enquiry
-                      </button>
-                    </div>
+                    <div className="rate">{plan.rate}% <span className="mut">p.a.</span></div>
+                    <div className="mut">{plan.tenure} months · from {inr(plan.min)}</div>
+                    <button type="button" className="btn" onClick={() => setPick(plan)}>
+                      Send enquiry
+                    </button>
                   </div>
                 );
               })}
             </div>
-            {!db.plans.length && <Empty>No FD plans yet.</Empty>}
+            {!plans.length && <Empty>No approved FD plans yet.</Empty>}
           </div>
         </>
       ) : (
@@ -110,6 +113,9 @@ export function UserDashboard({ db, setDb, sess, toast }) {
             list={mine}
             db={db}
             empty="You have not sent any enquiry yet. Pick a plan to start."
+            canDelete
+            refreshDb={refreshDb}
+            toast={toast}
           />
         </>
       )}
@@ -117,7 +123,7 @@ export function UserDashboard({ db, setDb, sess, toast }) {
       {pick && (
         <EnquiryForm
           plan={pick}
-          bank={db.banks.find((b) => b.id === pick.bankId)}
+          bank={db.banks.find((bank) => bank.id === pick.bankId)}
           onSubmit={send}
           onClose={() => setPick(null)}
         />
